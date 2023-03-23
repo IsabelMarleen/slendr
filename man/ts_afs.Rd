@@ -34,16 +34,21 @@ be folded (i.e. the counts will not depend on knowing which allele is
 ancestral)}
 }
 \value{
-Allele frequency spectrum values for the given sample set
+Allele frequency spectrum values for the given sample set. Note that the
+contents of the first and last elements of the AFS might surprise you. Read the
+links in the description for more detail on how tskit handles things.
 }
 \description{
 This function computes the AFS with respect to the given set of individuals
+or nodes.
 }
 \details{
 For more information on the format of the result and dimensions, in
-particular the interpretation of the first and the last element of the AFS,
-please see the tskit manual at
-\url{https://tskit.dev/tskit/docs/stable/python-api.html}
+particular the interpretation of the first and the last element of the AFS
+(when \code{complete = TRUE}), please see the tskit manual at
+\url{https://tskit.dev/tskit/docs/stable/python-api.html} and the example
+section dedicated to AFS at
+\url{https://tskit.dev/tutorials/analysing_tree_sequences.html#allele-frequency-spectra}.
 }
 \examples{
 \dontshow{check_dependencies(python = TRUE) # make sure dependencies are present

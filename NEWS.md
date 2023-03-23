@@ -1,5 +1,14 @@
 # slendr (development version)
 
+- `ts_ibd()` now returns the ID number of a MRCA node of a pair of nodes sharing a given IBD segment, as well as the TMRCA of that node. ([#7e2825](https://github.com/bodkan/slendr/commit/7e2825))
+
+# slendr 0.5.1
+
+- This minor release implements an emergency fix for a CRAN warning which suddenly popped up in latest CRAN checks. ([#5600a4](https://github.com/bodkan/slendr/commit/5600a4))
+
+- A new function `ts_ibd()` has been added, representing an R interface to the _tskit_ method `TreeSequence.ibd_segments()`. However, note that `ts_ibd()` returns IBD results as a data frame (optionally, a spatially annotated _sf_ data frame). The function does not operate around iteration, as does its Python counterpart in _tskit_. Until the next major version of _slendr_, this function should be considered experimental. (PR [#123](https://github.com/bodkan/slendr/pull/123))
+
+
 # slendr 0.5.0
 
 - **<u>Minor breaking change!</u> Python environments of _slendr_ are no longer automatically activated upon calling `library(slendr)`! Using the coalescent _msprime_ back end and _slendr_'s tree-sequence functions now requires making an explicit call to a new function `init_env()` after `library(slendr)` is executed.** (PR [#102](https://github.com/bodkan/slendr/pull/118))

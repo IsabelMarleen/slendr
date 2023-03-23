@@ -98,17 +98,6 @@ ts_load <- function(file, model = NULL,
   else
     type <- "SLiM"
 
-  # this is an awful workaround around the reticulate/Python bug which prevents
-  # import_from_path (see zzz.R) from working properly -- I'm getting nonsensical
-  #   Error in py_call_impl(callable, dots$args, dots$keywords) :
-  #     TypeError: integer argument expected, got float
-  # in places with no integer/float conversion in sight
-  #
-  # at least it prevents having to do things like:
-  # reticulate::py_run_string("def get_pedigree_ids(ts): return [ind.metadata['pedigree_id']
-  #                                                              for ind in ts.individuals()]")
-  reticulate::source_python(file = system.file("pylib/pylib.py", package = "slendr"))
-
   attr(ts, "type") <- type
   attr(ts, "model") <- model
   attr(ts, "spatial") <- type == "SLiM" && ts$metadata$SLiM$spatial_dimensionality != ""
@@ -1557,6 +1546,153 @@ ts_coalesced <- function(ts, return_failed = FALSE) {
     return(FALSE)
 }
 
+#' Collect Identity-by-Descent (IBD) segments
+#'
+#' This function iterates over a tree sequence and returns IBD tracts between
+#' pairs of individuals or nodes
+#'
+#' Iternally, this function leverages the tskit \code{TreeSequence} method
+#' \code{ibd_segments}. However, note that the \code{ts_ibd} function always
+#' returns a data frame of IBD tracts, it does not provide an option to iterate
+#' over individual IBD segments as shown in the official tskit documentation
+#' at <https://tskit.dev/tskit/docs/stable/ibd.html>. In general, R handles
+#' heavy iteration poorly, and this function does not attempt to serve as
+#' a full wrapper to \code{ibd_segments}.
+#'
+#' @param ts Tree sequence object of the class \code{slendr_ts}
+#' @param coordinates Should coordinates of all detected IBD tracts be reported?
+#'   If \code{FALSE} (the default), only the total length of shared IBD segments
+#'   and their numbers are reported. If \code{TRUE}, coordinates of each segment
+#'   will be returned (but note that this can have a massive impact on memory
+#'   usage). See details for more information.
+#' @param within A character vector with individual names or an integer vector with
+#'   node IDs indicating a set of nodes within which to look for IBD segments.
+#' @param between A list of lists of character vectors with individual names or
+#'   integer vectors with node IDs, indicating a set of nodes between which to
+#'   look for shared IBD segments.
+#' @param minimum_length Minimum length of an IBD segment to return in results.
+#'   This is useful for reducing the total amount of IBD returned.
+#' @param maximum_time Oldest MRCA of a node to be considered as an IBD ancestor
+#'   to return that IBD segment in results. This is useful for reducing the total
+#'   amount of IBD returned.
+#' @param sf If IBD segments in a spatial tree sequence are being analyzed, should
+#'   the returned table be a spatial sf object? Default is \code{TRUE}.
+#'
+#' @return A data frame with IBD results (either coordinates of each IBD segment
+#'   shared by a pair of nodes, or summary statistics about the total IBD sharing
+#'   for that pair)
+#'
+#' @examples
+#' \dontshow{check_dependencies(python = TRUE) # make sure dependencies are present
+#' }
+#' init_env()
+#'
+#' # load an example model with an already simulated tree sequence
+#' slendr_ts <- system.file("extdata/models/introgression.trees", package = "slendr")
+#' model <- read_model(path = system.file("extdata/models/introgression", package = "slendr"))
+#'
+#' # load the tree-sequence object from disk
+#' ts <- ts_load(slendr_ts, model, simplify = TRUE)
+#'
+#' # find IBD segments between specified Neanderthals and Europeans
+#' ts_ibd(
+#'   ts,
+#'   coordinates = TRUE,
+#'   between = list(c("NEA_1", "NEA_2"), c("EUR_1", "EUR_2")),
+#'   minimum_length = 40000
+#' )
+#' @export
+ts_ibd <- function(ts, coordinates = FALSE, within = NULL, between = NULL,
+                   minimum_length = NULL, maximum_time = NULL, sf = TRUE) {
+  # make sure warnings are reported immediately
+  opts <- options(warn = 1)
+  on.exit(options(opts))
+
+  model <- attr(ts, "model")
+  spatial <- attr(ts, "spatial")
+
+  if (is.null(minimum_length) && is.null(maximum_time))
+    warning("No minimum IBD length (minimum_length) or maximum age of an IBD\nancestor ",
+            "(maximum_time) has been provided. As a result all IBD tracts will be\n",
+            "reported. Depending on the size of your tree sequence, this might produce\n",
+            "extremely huge amount of data.", call. = FALSE)
+  if (!is.null(within))
+    within <- unlist(purrr::map(within, ~ get_node_ids(ts, .x)))
+  else if (!is.null(between)) {
+    between <- purrr::map(between, ~ get_node_ids(ts, .x))
+    # another bug in reticulate? if the list has names, Python gives us:
+    #   Error in py_call_impl(callable, dots$args, dots$keywords):
+    #     TypeError: '<' not supported between instances of 'numpy.ndarray' and 'int'
+    # names(between) <- NULL
+  }
+
+  result <- reticulate::py$collect_ibd(
+      ts,
+      coordinates = coordinates,
+      within = within,
+      between = between,
+      min_span = minimum_length,
+      max_time = maximum_time
+  ) %>% dplyr::as_tibble()
+
+  # drop a useless internal attribute (not a loss of information -- *we* are the ones
+  # who created the pandas DataFrame in the first place)
+  attr(result, "pandas.index") <- NULL
+
+  if (!nrow(result)) return(result)
+
+  nodes <- ts_nodes(ts)
+
+  # add node times to the IBD results table
+  result <- result %>%
+    dplyr::inner_join(as.data.frame(nodes)[, c("node_id", "time")], by = c("node1" = "node_id")) %>%
+    dplyr::rename(node1_time = time) %>%
+    dplyr::inner_join(as.data.frame(nodes)[, c("node_id", "time")], by = c("node2" = "node_id")) %>%
+    dplyr::rename(node2_time = time)
+
+  # perform further data processing if the model in question is spatial (and if there
+  # are any IBD segments at all)
+  if (spatial && sf) {
+    result <- result %>%
+      dplyr::inner_join(nodes[, c("node_id", "location")], by = c("node1" = "node_id")) %>%
+      dplyr::rename(node1_location = location) %>%
+      dplyr::inner_join(nodes[, c("node_id", "location")], by = c("node2" = "node_id")) %>%
+      dplyr::rename(node2_location = location)
+
+    result <- purrr::map2(
+      result$node1_location, result$node2_location, ~
+        if (.x == .y)
+          sf::st_sf(connection = sf::st_sfc(sf::st_linestring()), crs = sf::st_crs(nodes))
+        else {
+          sf::st_union(.x, .y) %>%
+          sf::st_cast("LINESTRING") %>%
+          sf::st_sfc() %>%
+          sf::st_sf(connection = ., crs = sf::st_crs(nodes))
+        }
+      ) %>%
+      dplyr::bind_rows() %>%
+      dplyr::bind_cols(result, .) %>%
+        sf::st_set_geometry("connection") %>%
+      sf::st_set_crs(sf::st_crs(nodes))
+  }
+
+  if (!is.null(model)) {
+    result[["name1"]] <- sapply(result$node1, function(i) nodes[nodes$node_id == i, ]$name)
+    result[["name2"]] <- sapply(result$node2, function(i) nodes[nodes$node_id == i, ]$name)
+    result[["pop1"]] <- sapply(result$node1, function(i) nodes[nodes$node_id == i, ]$pop)
+    result[["pop2"]] <- sapply(result$node2, function(i) nodes[nodes$node_id == i, ]$pop)
+  }
+
+  if (coordinates)
+    result <- dplyr::select(result, node1, node2, length, mrca, node1_time, node2_time, tmrca,
+                                    dplyr::everything())
+  else
+    result <- dplyr::select(result, node1, node2, count, total, node1_time, node2_time,
+                                    dplyr::everything())
+
+  result
+}
+
 # f-statistics ------------------------------------------------------------
 
 fstat <- function(ts, stat, sample_sets, mode, windows, span_normalise) {
@@ -1965,11 +2101,14 @@ ts_tajima <- function(ts, sample_sets, mode = c("site", "branch", "node"),
 #' Compute the allele frequency spectrum (AFS)
 #'
 #' This function computes the AFS with respect to the given set of individuals
+#' or nodes.
 #'
 #' For more information on the format of the result and dimensions, in
-#' particular the interpretation of the first and the last element of the AFS,
-#' please see the tskit manual at
-#' <https://tskit.dev/tskit/docs/stable/python-api.html>
+#' particular the interpretation of the first and the last element of the AFS
+#' (when \code{complete = TRUE}), please see the tskit manual at
+#' <https://tskit.dev/tskit/docs/stable/python-api.html> and the example
+#' section dedicated to AFS at
+#' <https://tskit.dev/tutorials/analysing_tree_sequences.html#allele-frequency-spectra>.
 #'
 #' @param ts Tree sequence object of the class \code{slendr_ts}
 #' @param sample_sets A list (optionally a named list) of character vectors with
@@ -1985,7 +2124,9 @@ ts_tajima <- function(ts, sample_sets, mode = c("site", "branch", "node"),
 #' @param span_normalise Argument passed to tskit's \code{allele_frequency_spectrum}
 #'   method
 #'
-#' @return Allele frequency spectrum values for the given sample set
+#' @return Allele frequency spectrum values for the given sample set. Note that the
+#'   contents of the first and last elements of the AFS might surprise you. Read the
+#'   links in the description for more detail on how tskit handles things.
 #'
 #' @examples
 #' \dontshow{check_dependencies(python = TRUE) # make sure dependencies are present
@@ -2008,6 +2149,7 @@ ts_afs <- function(ts, sample_sets = NULL, mode = c("site", "branch", "node"),
                    windows = NULL, span_normalise = FALSE,
                    polarised = FALSE) {
   mode <- match.arg(mode)
+
   if (is.null(sample_sets))
     sample_sets <- list(ts_samples(ts)$name)
   else if (!is.list(sample_sets))
@@ -2026,8 +2168,8 @@ ts_afs <- function(ts, sample_sets = NULL, mode = c("site", "branch", "node"),
     polarised = polarised
   )
 
-  # drop the useless 0-th element when there's no windowing
-  if (is.null(windows)) result <- result[-1]
+  # convert 1D array to a simple vector
+  if (length(sample_sets) == 1) result <- as.numeric(result)
 
   result
 }
@@ -2040,6 +2182,7 @@ ts_afs <- function(ts, sample_sets = NULL, mode = c("site", "branch", "node"),
 #'     "c('phylo', 'slendr_phylo')"}
 #'
 #' @param x Tree object of the class \code{slendr_phylo}
+#' @param ... Additional (unused) arguments of the \code{as.phylo} S3 method
 #'
 #' @return Standard phylogenetic tree object implemented by the R package ape
 #'
@@ -2047,7 +2190,7 @@ ts_afs <- function(ts, sample_sets = NULL, mode = c("site", "branch", "node"),
 #' @export as.phylo.slendr_phylo
 #' @export
 #' @keywords internal
-as.phylo.slendr_phylo <- function(x) { class(x) <- "phylo"; x }
+as.phylo.slendr_phylo <- function(x, ...) { class(x) <- "phylo"; x }
 
 
 #' Print tskit's summary table of the Python tree-sequence object
@@ -2099,11 +2242,11 @@ get_ts_raw_nodes <- function(ts) {
 
   # in case of slendr tree sequences, convert times to the model time units
   if (from_slendr)
-    node_table$time <- time_fun(ts)(table$time, model)
+    node_table$time <- as.numeric(time_fun(ts)(table$time, model))
   else
-    node_table$time <- table$time
+    node_table$time <- as.numeric(table$time)
 
-  node_table$time_tskit <- table$time
+  node_table$time_tskit <- as.numeric(table$time)
 
   # -1 as a missing value in tskit is not very R like, so let's replace it with
   # a proper NA
@@ -2197,8 +2340,8 @@ get_ts_raw_mutations <- function(ts) {
     id = seq_len(table$num_rows) - 1,
     site = as.vector(table[["site"]]),
     node = as.vector(table[["node"]]),
-    time = time,
-    time_tskit = table[["time"]]
+    time = as.numeric(time),
+    time_tskit = as.numeric(table[["time"]])
   )
 }
 
