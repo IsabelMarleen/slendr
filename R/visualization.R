@@ -245,7 +245,7 @@ plot_model <- function(model, sizes = TRUE, proportions = FALSE, log = FALSE) {
     remove <- attr(pop, "remove")
     if (remove == -1)
       return(as.integer(default_end))
-    else if (remove > 0)
+    else if (remove >= 0)
       return(as.integer(remove))
     else
       stop("Unknown end time", call. = FALSE)
