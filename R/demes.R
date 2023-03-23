@@ -49,7 +49,7 @@ compile_demes <- function(demes_path){
 convert_deme <- function(deme, pops){
   p_name <- deme$name
   if (deme$start_time == Inf){
-    p_time <- find_oldest_time_anchor(demes)+1 # TODO: Extract oldest time in the model as an anchor point
+    p_time <- find_oldest_time_anchor(deme)+1 # TODO: Extract oldest time in the model as an anchor point
   } else {
     p_time <- deme$start_time
   }
