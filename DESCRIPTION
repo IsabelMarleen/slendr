@@ -47,7 +47,8 @@ Imports:
     ijtiff,
     shinyWidgets,
     shiny,
-    ape
+    ape,
+    demes
 Suggests:
     testthat (>= 3.0.0),
     knitr,
@@ -59,6 +60,8 @@ Suggests:
     cowplot,
     forcats,
     rsvg
+Remotes:
+    RacimoLab/demes-r
 VignetteBuilder: knitr
 URL: https://github.com/bodkan/slendr
 BugReports: https://github.com/bodkan/slendr/issues
