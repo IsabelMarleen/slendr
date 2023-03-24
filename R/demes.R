@@ -21,8 +21,9 @@ compile_demes <- function(demes_path){
   # TODO: Fix Parents
   #pops <- purrr::map(demes$demes, convert_deme)
   pops <- list()
+  anchor <- find_oldest_time_anchor(demes)+1
   for (i in 1:length(demes$demes)){
-    pops[[i]] <- convert_deme(demes$demes[[i]], pops)
+    pops[[i]] <- convert_deme(demes$demes[[i]], pops, anchor)
     names(pops)[i] <- pops[[i]]$pop
   }
 
@@ -46,10 +47,10 @@ compile_demes <- function(demes_path){
   return(model)
 }
 
-convert_deme <- function(deme, pops){
+convert_deme <- function(deme, pops, oldest_anchor){
   p_name <- deme$name
   if (deme$start_time == Inf){
-    p_time <- find_oldest_time_anchor(deme)+1 # TODO: Extract oldest time in the model as an anchor point
+    p_time <- oldest_anchor # TODO: Extract oldest time in the model as an anchor point
   } else {
     p_time <- deme$start_time
   }
@@ -112,8 +113,15 @@ find_youngest_time_anchor <- function(demes){
 find_oldest_time_anchor <- function(demes){
   anchor <- purrr::map(demes$demes, ~.x$start_time) %>%
     unlist() %>%
-    .[. != Inf] %>%
-    max()
+    .[. != Inf]
+
+  if (all(is.na(anchor))){
+    anchor <-  purrr::map(demes$demes, ~.x$epochs[[1]]$end_time) %>%
+      unlist() %>%
+      max()
+  } else {
+    anchor <-  max(anchor)
+  }
 
   return(anchor)
 }
