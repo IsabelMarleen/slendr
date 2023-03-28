@@ -22,16 +22,17 @@ compile_demes <- function(demes_path){
   #pops <- purrr::map(demes$demes, convert_deme)
   pops <- list()
   anchor <- find_oldest_time_anchor(demes)+1
+  gen_time <- demes$generation_time
   for (i in 1:length(demes$demes)){
     pops[[i]] <- convert_deme(demes$demes[[i]], pops, anchor)
     names(pops)[i] <- pops[[i]]$pop
   }
 
   # Resize / Epochs
-  pops <- purrr::map(demes$demes, ~purrr::map(.x$epochs, convert_epoch, pop=pops[[.x$name]])[[1]])
+  pops <- purrr::map(demes$demes, ~convert_epochs(.x$epochs, pop=pops[[.x$name]]))
 
   # Geneflow events
-  gf <- purrr::map(demes$migrations, convert_migration, pops=pops)
+  gf <- purrr::map(demes$migrations, convert_migration, pops=pops, gen_time)
 
   if (length(gf) == 0){
     model <- compile_model(populations = pops,
@@ -55,16 +56,18 @@ convert_deme <- function(deme, pops, oldest_anchor){
     p_time <- deme$start_time
   }
   latest_epoch <- length(deme$epochs)
-  p_remove <- deme$epochs[[latest_epoch]]$end_time
+  if (deme$epochs[[latest_epoch]]$end_time == 0){
+    p_remove <- -1
+  } else {
+    p_remove <- deme$epochs[[latest_epoch]]$end_time
+  }
+
   p_start_size <- deme$epochs[[1]]$start_size
 
-  # TODO: Check why jacobs doesn't end at 0
   if (length(deme$ancestors) != 0){
     p_parent <- pops[[deme$ancestors[1]]]
     pop <- population(name = p_name, time = p_time, N = p_start_size, parent = p_parent, remove=p_remove)
-   } #else if (p_remove == 0){
-  #   pop <- population(name = p_name, time = p_time, N = p_start_size)
-  # }
+   }
   else {
     pop <- population(name = p_name, time = p_time, N = p_start_size, remove=p_remove)
   }
@@ -72,23 +75,29 @@ convert_deme <- function(deme, pops, oldest_anchor){
   return(pop)
 }
 
-convert_epoch <- function(epoch, pop){
-  r_N <- epoch$end_size
-  if (epoch$size_function == "exponential"){
-    r_how <- "exponential"
-  } else if (epoch$size_function == "constant") {
-    return(pop)
-  } else {
-    r_how <- "step"
-  }
-  r_time <- epoch$start_time
-  r_end <- epoch$end_time
+convert_epochs <- function(epochs, pop){
+  for (i in 1:length(epochs)){
+    epoch <- epochs[[i]]
+    r_N <- epoch$end_size
+    if (epoch$size_function == "exponential"){
+      r_how <- "exponential"
+    } else if (epoch$size_function == "constant" & i == 1 ){
+      next
+    } else {
+      r_how <- "step"
+    }
+    r_time <- epoch$start_time
+    if (r_time == Inf){
+      r_time <- pop$time
+    }
+    r_end <- epoch$end_time
 
-  r <- resize(pop, N = r_N, how = r_how, time = r_time, end = r_end)
-  return(r)
+    pop <- resize(pop, N = r_N, how = r_how, time = r_time, end = r_end)
+  }
+  return(pop)
 }
 
-convert_migration <- function(migration, pops){
+convert_migration <- function(migration, pops, gen_time){
   if (length(migration) == 0){
     return()
   } else {
@@ -96,6 +105,9 @@ convert_migration <- function(migration, pops){
     gf_to <- pops[[migration$dest]]
     gf_rate <- migration$rate
     gf_start <- migration$start_time
+    if (gf_start == pops[[migration$source]]$time){
+      gf_start <- gf_start-(1*gen_time)
+    }
     gf_end <- migration$end_time
 
     g <- gene_flow(from = gf_from, to = gf_to, rate = gf_rate, start = gf_start, end = gf_end)
