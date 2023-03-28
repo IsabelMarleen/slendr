@@ -295,7 +295,8 @@ print_pop_history <- function(x) {
                   event$tresize, event$prev_N, event$N))
     } else if (event$event == "resize" && event$how == "exponential") {
       cat(sprintf("  - time %d-%d: exponential resize from %d to %d individuals",
-                  event$tresize, event$tend, event$prev_N, event$N))
+                  as.integer(event$tresize), as.integer(event$tend), event$prev_N, event$N))
+      # display time as integers, even if it is actually a decimal number, this improves readability
     }
 
     # change of dispersal parameters
