@@ -29,7 +29,7 @@ compile_demes <- function(demes_path){
   }
 
   # Resize / Epochs
-  pops <- purrr::map(demes$demes, ~convert_epochs(.x$epochs, pop=pops[[.x$name]]))
+  pops <- purrr::map(demes$demes, ~convert_epochs(.x$epochs, pop=pops[[.x$name]], gen_time))
 
   # Geneflow events
   gf <- purrr::map(demes$migrations, convert_migration, pops=pops, gen_time)
@@ -75,7 +75,7 @@ convert_deme <- function(deme, pops, oldest_anchor){
   return(pop)
 }
 
-convert_epochs <- function(epochs, pop){
+convert_epochs <- function(epochs, pop, gen_time){
   for (i in 1:length(epochs)){
     epoch <- epochs[[i]]
     r_N <- epoch$end_size
@@ -88,7 +88,9 @@ convert_epochs <- function(epochs, pop){
     }
     r_time <- epoch$start_time
     if (r_time == Inf){
-      r_time <- pop$time
+      r_time <- pop$time - 1*gen_time
+    } else if (r_time == pop$time){
+      r_time <- r_time - 1*gen_time
     }
     r_end <- epoch$end_time
 
@@ -106,6 +108,8 @@ convert_migration <- function(migration, pops, gen_time){
     gf_rate <- migration$rate
     gf_start <- migration$start_time
     if (gf_start == pops[[migration$source]]$time){
+      gf_start <- gf_start-(1*gen_time)
+    } else if (gf_start == pops[[migration$dest]]$time){
       gf_start <- gf_start-(1*gen_time)
     }
     gf_end <- migration$end_time
