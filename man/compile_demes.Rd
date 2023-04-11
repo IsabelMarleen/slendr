@@ -4,7 +4,7 @@
 \alias{compile_demes}
 \title{Load and validate a Demes model in slendr format}
 \usage{
-compile_demes(demes_path)
+compile_demes(demes_path, output_path = NULL)
 }
 \arguments{
 \item{demes_path}{File path to yaml file specifying the Demes model}
