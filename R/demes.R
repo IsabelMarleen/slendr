@@ -19,7 +19,6 @@ compile_demes <- function(demes_path, output_path = NULL){
 
   # Populations
   # TODO: Fix Parents
-  #pops <- purrr::map(demes$demes, convert_deme)
   pops <- list()
   anchor <- find_oldest_time_anchor(demes)+1
   gen_time <- demes$generation_time
@@ -32,19 +31,23 @@ compile_demes <- function(demes_path, output_path = NULL){
   pops <- purrr::map(demes$demes, ~convert_epochs(.x$epochs, pop=pops[[.x$name]], gen_time))
 
   # Geneflow events
-  gf <- purrr::map(demes$migrations, convert_migration, pops=pops, gen_time)
+  gf_migs <- purrr::map(demes$migrations, convert_migration, pops=pops, gen_time)
+  gf_pulses <- purrr::map(demes$pulses, convert_pulse, pops=pops, gen_time)
+  gf <- c(gf_migs, gf_pulses)
 
   if (length(gf) == 0){
     model <- compile_model(populations = pops,
                            generation_time = demes$generation_time,
                            description = demes$description,
-                           path=output_path)
+                           path=output_path,
+                           direction = "backward")
   } else {
     model <- compile_model(populations = pops,
                            generation_time = demes$generation_time,
                            gene_flow = gf,
                            description = demes$description,
-                           path=output_path)
+                           path=output_path,
+                           direction = "backward")
   }
 
   return(model)
@@ -122,6 +125,27 @@ convert_migration <- function(migration, pops, gen_time){
   }
 }
 
+convert_pulse <- function(pulse, pops, gen_time){
+  if (length(pulse) == 0){
+    return()
+  } else {
+    gf_from <- pops[[pulse$source]]
+    gf_to <- pops[[pulse$dest]]
+    gf_rate <- pulse$proportions
+    gf_start <- pulse$time
+    if (gf_start == pops[[pulse$source]]$time){
+      gf_start <- gf_start-(1*gen_time)
+    } else if (gf_start == pops[[pulse$dest]]$time){
+      gf_start <- gf_start-(1*gen_time)
+    }
+    gf_end <- gf_start-(1*gen_time)
+
+    g <- gene_flow(from = gf_from, to = gf_to, rate = gf_rate, start = gf_start, end = gf_end)
+
+    return(g)
+  }
+}
+
 find_youngest_time_anchor <- function(demes){
   anchor <- min()
 
@@ -129,17 +153,20 @@ find_youngest_time_anchor <- function(demes){
 }
 
 find_oldest_time_anchor <- function(demes){
-  anchor <- purrr::map(demes$demes, ~.x$start_time) %>%
+  anchor_start_time <- purrr::map(demes$demes, ~.x$start_time) %>%
     unlist() %>%
     .[. != Inf]
 
-  if (all(is.na(anchor))){
-    anchor <-  purrr::map(demes$demes, ~.x$epochs[[1]]$end_time) %>%
-      unlist() %>%
-      max()
-  } else {
-    anchor <-  max(anchor)
-  }
+  anchor_end_time <-  purrr::map(demes$demes, ~.x$epochs[[1]]$end_time) %>%
+    unlist()
+
+  anchor_migs <- purrr::map(demes$migrations, ~.x$start_time) %>%
+    unlist()
+
+  anchor_pulse <- purrr::map(demes$pulses, ~.x$time) %>%
+    unlist()
+
+  anchor <-  max(anchor_start_time, anchor_end_time, anchor_migs, anchor_pulse, na.rm = TRUE)
 
   return(anchor)
 }
