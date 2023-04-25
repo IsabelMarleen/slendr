@@ -12,7 +12,7 @@
 #' @examples
 #' path_jacobs <- system.file("extdata", "models", "Demes", "jacobs.yaml", package = "slendr")
 #' slendr_model <- compile_demes(path_jacobs)
-compile_demes <- function(demes_path, output_path = NULL){
+compile_demes <- function(demes_path, output_path = NULL, overwrite=FALSE){
   demes <- demes::read_demes(demes_path)
 
   # TODO: Maybe introduce checks for things like infinite start_times where demes and slendr disagree
@@ -40,14 +40,16 @@ compile_demes <- function(demes_path, output_path = NULL){
                            generation_time = demes$generation_time,
                            description = demes$description,
                            path=output_path,
-                           direction = "backward")
+                           direction = "backward",
+                           overwrite = overwrite)
   } else {
     model <- compile_model(populations = pops,
                            generation_time = demes$generation_time,
                            gene_flow = gf,
                            description = demes$description,
                            path=output_path,
-                           direction = "backward")
+                           direction = "backward",
+                           overwrite = overwrite)
   }
 
   return(model)
