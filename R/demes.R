@@ -1,6 +1,9 @@
 #' Load and validate a Demes model in slendr format
 #'
 #' @param demes_path File path to yaml file specifying the Demes model
+#' @param output_path File path where a folder with the resulting slendr model will be saved.
+#' By default it is NULL and no model is saved to disk.
+#' @param overwrite If the output folder already exists, should it be overwritten? Defaults to FALSE.
 #'
 #' @return Compiled \code{slendr_model} model object which encapsulates all
 #'   information about the specified model (which populations are involved,
@@ -18,7 +21,6 @@ compile_demes <- function(demes_path, output_path = NULL, overwrite=FALSE){
   # TODO: Maybe introduce checks for things like infinite start_times where demes and slendr disagree
 
   # Populations
-  # TODO: Fix Parents
   pops <- list()
   anchor <- find_oldest_time_anchor(demes)+1
   gen_time <- demes$generation_time
@@ -33,11 +35,11 @@ compile_demes <- function(demes_path, output_path = NULL, overwrite=FALSE){
   # Geneflow events
   gf <- purrr::map(demes$migrations, convert_migration, pops=pops, gen_time)
   gf_pulses <- purrr::map(demes$pulses, convert_pulse, pops=pops, gen_time)
-  if (!is.na(gf_pulses)){
-    warning("Pulses are not implemented in slendr, so a pulse is treated as a migration
-            lasting for one generation from the pulse time.",
+  if (length(gf_pulses) != 0){
+    warning(paste0("Pulses are not implemented in slendr, so a pulse is treated as a migration ",
+            "lasting for one generation from the pulse time."),
             call. = FALSE)
-    gf <- c(gf_migs, gf_pulses)
+    gf <- c(gf, gf_pulses)
   }
 
   if (length(gf) == 0){
@@ -64,8 +66,8 @@ convert_deme <- function(deme, pops, oldest_anchor){
   p_name <- deme$name
   if (deme$start_time == Inf){
     p_time <- oldest_anchor
-    warning("Infinity is not a valid start time for a population in slendr,
-            so the start_time was set as one generation before the oldest time point in the model.",
+    warning(paste("Infinity is not a valid start time for a population in slendr,",
+            "so the start_time was set as one generation before the oldest time point in the model."),
             call. = FALSE)
   } else {
     p_time <- deme$start_time
@@ -103,13 +105,13 @@ convert_epochs <- function(epochs, pop, gen_time){
       r_how <- "exponential"
     } else if (epoch$size_function == "constant" & i == 1 ){
       next
-    } else if (epoch$size_function == "step") {
+    } else if (epoch$size_function == "step" | epoch$size_function == "constant") {
       r_how <- "step"
     } else {
       r_how <- "step"
-      warning(paste0("In slendr, a resizing event can only have a size_function of 'exponential' or
-                     'step', but epoch ", i, " in population ", pop$pop, " had a different value,
-                     so 'step' was used as default."),
+      warning(paste0("In slendr, a resizing event can only have a size_function of 'exponential' or ",
+                     "'step', but epoch ", i, " in population ", pop$pop, " had a different value, ",
+                     "so 'step' was used as default."),
               call. = FALSE)
     }
     r_time <- epoch$start_time
@@ -135,8 +137,8 @@ convert_migration <- function(migration, pops, gen_time){
     gf_start <- migration$start_time
     if (gf_start == pops[[migration$source]]$time | gf_start == pops[[migration$dest]]$time){
       gf_start <- gf_start-(1*gen_time)
-      warning(paste0("SLiM does not allow a gene flow event to start in the same generation in which a population was created.
-      This affects a migration from ", migration$source, " to ", migration$dest,
+      warning(paste0("SLiM does not allow a gene flow event to start in the same generation in which a population was created. ",
+      "This affects a migration from ", migration$source, " to ", migration$dest,
                      ", so the gene flow event was set to start one generation later."),
               call. = FALSE)
     }
@@ -158,8 +160,8 @@ convert_pulse <- function(pulse, pops, gen_time){
     gf_start <- pulse$time
     if (gf_start == pops[[pulse$source]]$time | gf_start == pops[[pulse$dest]]$time){
       gf_start <- gf_start-(1*gen_time)
-      warning(paste0("SLiM does not allow a gene flow event to start in the same
-                     generation in which a population was created. This affects a pulse from ",
+      warning(paste0("SLiM does not allow a gene flow event to start in the same",
+                     "generation in which a population was created. This affects a pulse from ",
                      pulse$source, " to ", pulse$dest,
                      ", so the gene flow event was set to start one generation later."),
               call. = FALSE)
