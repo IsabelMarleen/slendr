@@ -4,10 +4,15 @@
 \alias{compile_demes}
 \title{Load and validate a Demes model in slendr format}
 \usage{
-compile_demes(demes_path, output_path = NULL)
+compile_demes(demes_path, output_path = NULL, overwrite = FALSE)
 }
 \arguments{
 \item{demes_path}{File path to yaml file specifying the Demes model}
+
+\item{output_path}{File path where a folder with the resulting slendr model will be saved.
+By default it is NULL and no model is saved to disk.}
+
+\item{overwrite}{If the output folder already exists, should it be overwritten? Defaults to FALSE.}
 }
 \value{
 Compiled \code{slendr_model} model object which encapsulates all
