@@ -48,7 +48,8 @@ Imports:
     shinyWidgets,
     shiny,
     ape,
-    demes
+    demes,
+    scales
 Suggests:
     testthat (>= 3.0.0),
     knitr,
