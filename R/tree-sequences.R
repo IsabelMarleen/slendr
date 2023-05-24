@@ -159,6 +159,27 @@ ts_load <- function(file, model = NULL,
 #' @export
 ts_save <- function(ts, file) {
   check_ts_class(ts)
+  type <- attr(ts, "type")
+  from_slendr <- !is.null(attr(ts, "model"))
+
+  # overwrite the original list of sample names (if the tree sequence was simplified
+  # down to a smaller number of individuals than originally sampled)
+  if (from_slendr && nrow(ts_samples(ts)) != nrow(attr(ts, "metadata")$sampling)) {
+    tables <- ts$dump_tables()
+    tables$metadata_schema = tskit$MetadataSchema(list("codec" = "json"))
+
+    sample_names <- attr(ts, "metadata")$sample_names
+    pedigree_ids <- attr(ts, "metadata")$sample_ids
+    if (type == "SLiM") {
+      tables$metadata$SLiM$user_metadata$slendr[[1]]$sample_names <- sample_names
+      tables$metadata$SLiM$user_metadata$slendr[[1]]$sample_ids <- pedigree_ids
+    } else
+      tables$metadata$slendr$sample_names <- sample_names
+
+    # put the tree sequence object back together
+    ts <- tables$tree_sequence()
+  }
+
   ts$dump(path.expand(file))
 }
 
@@ -248,6 +269,7 @@ ts_recapitate <- function(ts, recombination_rate, Ne = NULL, demography = NULL, 
     # inherit the information about which individuals should be marked as
     # explicitly "sampled" from the previous tree sequence object (if that
     # was specified) -- this is only necessary for a SLiM sequence
+    # TODO: no longer necessary
     old_individuals <- attr(ts, "raw_individuals")
     sampled_ids <- old_individuals[old_individuals$sampled, ]$pedigree_id
     attr(ts_new, "raw_individuals") <- attr(ts_new, "raw_individuals") %>%
@@ -288,6 +310,15 @@ ts_recapitate <- function(ts, recombination_rate, Ne = NULL, demography = NULL, 
 #'   after the simplification.
 #' @param keep_input_roots Should the history ancestral to the MRCA of all
 #'   samples be retained in the tree sequence? Default is \code{FALSE}.
+#' @param keep_unary Should unary nodes be preserved through simplification?
+#'   Default is \code{FALSE}.
+#' @param keep_unary_in_individuals Should unary nodes be preserved through
+#'   simplification if they are associated with an individual recorded in
+#'   the table of individuals? Default is \code{FALSE}. Cannot be set to
+#'   \code{TRUE} if \code{keep_unary} is also TRUE
+#' @param filter_nodes Should nodes be reindexed after simplification? Default is
+#'   \code{TRUE}. See tskit's documentation for the Python method \code{simplify()}
+#    for more detail.
 #'
 #' @return Tree-sequence object of the class \code{slendr_ts}, which serves as
 #'   an interface point for the Python module tskit using slendr functions with
@@ -321,7 +352,9 @@ ts_recapitate <- function(ts, recombination_rate, Ne = NULL, demography = NULL, 
 #'
 #' ts_small
 #' @export
-ts_simplify <- function(ts, simplify_to = NULL, keep_input_roots = FALSE) {
+ts_simplify <- function(ts, simplify_to = NULL, keep_input_roots = FALSE,
+                        keep_unary = FALSE, keep_unary_in_individuals = FALSE,
+                        filter_nodes = TRUE) {
   check_ts_class(ts)
 
   model <- attr(ts, "model")
@@ -335,13 +368,6 @@ ts_simplify <- function(ts, simplify_to = NULL, keep_input_roots = FALSE) {
             call. = FALSE)
 
   data <- attr(ts, "nodes")
-
-  if (is.null(simplify_to) && type == "generic") {
-    warning("If you want to simplify an msprime tree sequence, you must specify\n",
-            "the names of individuals to simplify to via the `simplify_to = `\n",
-            "function argument.", call. = FALSE)
-    return(ts)
-  }
 
   if (is.null(simplify_to)) { # no individuals/nodes were given to guide the simplification
     samples <- dplyr::filter(data, sampled)$node_id # simplify to all sampled nodes
@@ -365,7 +391,10 @@ ts_simplify <- function(ts, simplify_to = NULL, keep_input_roots = FALSE) {
 
   ts_new <- ts$simplify(as.integer(samples),
                         filter_populations = FALSE,
-                        keep_input_roots = keep_input_roots)
+                        filter_nodes = filter_nodes,
+                        keep_input_roots = keep_input_roots,
+                        keep_unary = keep_unary,
+                        keep_unary_in_individuals = keep_unary_in_individuals)
 
   # copy attributes over to the new tree-sequence object or generate updates
   # ones where necessary
@@ -429,6 +458,14 @@ ts_simplify <- function(ts, simplify_to = NULL, keep_input_roots = FALSE) {
                                          "retained", "alive", "pedigree_id", "ind_id", "pop_id")]
   } else
     attr(ts_new, "nodes") <- get_tskit_table_data(ts_new, simplify_to)
+
+  # replace the names of sampled individuals (if simplification led to subsetting)
+  if (from_slendr) {
+    sampled_nodes <- attr(ts_new, "nodes") %>% dplyr::filter(sampled)
+    attr(ts_new, "metadata")$sample_names <-  unique(sampled_nodes$name)
+    if (type == "SLiM")
+      attr(ts_new, "metadata")$sample_ids <- unique(sampled_nodes$pedigree_id)
+  }
 
   class(ts_new) <- c("slendr_ts", class(ts_new))
 
@@ -1131,9 +1168,8 @@ ts_samples <- function(ts) {
          "from a slendr model. To access information about times and\nlocations ",
          "of nodes and individuals from non-slendr tree sequences,\nuse the ",
          "function ts_nodes().\n", call. = FALSE)
-  data <- ts_nodes(ts) %>% dplyr::filter(sampled, !is.na(name))
   samples <- attr(ts, "metadata")$sampling %>%
-    dplyr::filter(name %in% data$name)
+    dplyr::filter(name %in% attr(ts, "metadata")$sample_names)
 
   samples
 }
@@ -1392,9 +1428,9 @@ ts_descendants <- function(ts, x, verbose = FALSE, complete = TRUE) {
 #'
 #' @param ts Tree sequence object of the class \code{slendr_ts}
 #' @param i Position of the tree in the tree sequence. If \code{mode = "index"},
-#'   an i-th tree will be returned (in one-based indexing), if \code{mode =
-#'   "position"}, a tree covering an i-th base of the simulated genome will be
-#'   returned.
+#'   an i-th tree will be returned (in zero-based indexing as in tskit), if
+#'   \code{mode = "position"}, a tree covering the i-th base of the simulated genome will be
+#'   returned (again, in tskit's indexing).
 #' @param mode How should the \code{i} argument be interpreted? Either "index"
 #'   as an i-th tree in the sequence of genealogies, or "position" along the
 #'   simulated genome.
@@ -1415,19 +1451,19 @@ ts_descendants <- function(ts, x, verbose = FALSE, complete = TRUE) {
 #' # load the tree-sequence object from disk
 #' ts <- ts_load(slendr_ts, model, simplify = TRUE)
 #'
-#' # extract the first tree in the tree sequence
-#' tree <- ts_tree(ts, i = 1)
+#' # extract the zero-th tree in the tree sequence
+#' tree <- ts_tree(ts, i = 0)
 #'
-#' # extract the tree at a position 100000bp in the tree sequence
+#' # extract the tree at a position in the tree sequence
 #' tree <- ts_tree(ts, i = 100000, mode = "position")
 #' @export
 ts_tree <- function(ts, i, mode = c("index", "position"), ...) {
   check_ts_class(ts)
   mode <- match.arg(mode)
   if (mode == "index")
-    tree <- ts$at_index(index = i - 1, ...)
+    tree <- ts$at_index(index = i, ...)
   else
-    tree <- ts$at(position = i - 1, ...)
+    tree <- ts$at(position = i, ...)
   attr(tree, "tree_sequence") <- ts
   tree
 }
@@ -1445,6 +1481,7 @@ ts_tree <- function(ts, i, mode = c("index", "position"), ...) {
 #' @param sampled_only Should only individuals explicitly sampled through
 #'   simplification be labeled? This is relevant in situations in which sampled
 #'   individuals can themselves be among the ancestral nodes.
+#' @param title Optional title for the figure
 #' @param ... Keyword arguments to the tskit \code{draw_svg} function.
 #'
 #' @return No return value, called for side effects
@@ -1467,10 +1504,11 @@ ts_tree <- function(ts, i, mode = c("index", "position"), ...) {
 #' # ts_draw accepts various optional arguments of tskit.Tree.draw_svg
 #' ts_draw(tree, time_scale = "rank")
 #' @export
-ts_draw <- function(x, width = 1500, height = 500, labels = FALSE,
-                    sampled_only = TRUE, ...) {
+ts_draw <- function(x, width = 1000, height = 1000, labels = FALSE,
+                    sampled_only = TRUE, title = NULL, ...) {
   # set margins to zero, save original settings
-  orig_par <- graphics::par(mar = c(0, 0, 0, 0))
+  top_margin <- if (is.null(title)) 0 else 5
+  orig_par <- graphics::par(mar = c(0, 0, top_margin, 0))
   # restore original settings
   on.exit(graphics::par(orig_par))
 
@@ -1501,8 +1539,10 @@ ts_draw <- function(x, width = 1500, height = 500, labels = FALSE,
   # plot the PNG image, filling the entire plotting window
   img <- png::readPNG(tmp_file)
   graphics::plot.new()
-  graphics::plot.window(0:1, 0:1)
-  graphics::rasterImage(img, 0, 0, 1, 1)
+  aspect_ratio <- dim(img)[1] / dim(img)[2]
+  graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1), asp = aspect_ratio)
+  graphics::rasterImage(img, xleft = 0, ybottom = 0, xright = 1, ytop = 1)
+  graphics::title(title)
 }
 
 #' Check that all trees in the tree sequence are fully coalesced
@@ -2305,7 +2345,11 @@ get_ts_raw_individuals <- function(ts) {
     if (from_slendr) {
       ind_table$time <- time_fun(ts)(ts$individual_times, model)
       # for slendr SLiM models, "sampled" nodes are those were explicitly scheduled for sampling
-      ind_table$sampled <- ind_table$remembered
+      # - for "original" SLiM/slendr tree sequences, sampled nodes are those that are remembered
+      if (is.null(attr(ts, "metadata")$sample_ids))
+        ind_table$sampled <- ind_table$remembered
+      else # - for previously simplified tree sequences, use information from pedigree IDs
+        ind_table$sampled <- ind_table$pedigree_id %in% attr(ts, "metadata")$sample_ids
     } else {
       ind_table$time <- ts$individual_times
       # for pure SLiM tree sequences, simply use the sampling information encoded in the data
@@ -2402,7 +2446,14 @@ get_pyslim_table_data <- function(ts, simplify_to = NULL) {
 
   # load information about samples at times and from populations of remembered individuals
   if (from_slendr) {
-    samples <- attr(ts, "metadata")$sampling %>% dplyr::arrange(-time, pop)
+    # when a tree sequence is being loaded from a file where it was saved in its
+    # simplified form, the metadata table saved along side it won't correspond to the
+    # subset of sampled nodes -- in these situations, subset the original sampling table
+    # using the names of sampled individuals that are propagated through serialization
+    # (this is achieved by the filter() step right below)
+    samples <- attr(ts, "metadata")$sampling %>%
+      dplyr::arrange(-time, pop) %>%
+      dplyr::filter(name %in% attr(ts, "metadata")$sample_names)
     if (!is.null(simplify_to))
       samples <- samples %>% dplyr::filter(name %in% simplify_to)
   } else
@@ -2493,7 +2544,12 @@ get_tskit_table_data <- function(ts, simplify_to = NULL) {
   # load information about samples at times and from populations of remembered
   # individuals
   if (from_slendr) {
-    samples <- attr(ts, "metadata")$sampling
+    # when a tree sequence is being loaded from a file where it was saved in its
+    # simplified form, the metadata table saved along side it won't correspond to the
+    # subset of sampled nodes -- in these situations, subset the original sampling table
+    # using the names of sampled individuals that are propagated through serialization
+    samples <- attr(ts, "metadata")$sampling %>%
+      dplyr::filter(name %in% attr(ts, "metadata")$sample_names)
     if (!is.null(simplify_to))
       samples <- dplyr::filter(samples, name %in% simplify_to)
     samples <- dplyr::arrange(samples, -time, pop)
@@ -2782,7 +2838,7 @@ get_sampling <- function(metadata) {
   } else
     sampling <- dplyr::as_tibble(metadata$sampling)
 
-  sampling %>%
+  df <- sampling %>%
     dplyr::select(-time_gen) %>%
     {
       rbind(
@@ -2796,6 +2852,10 @@ get_sampling <- function(metadata) {
     dplyr::arrange(-time_orig, pop) %>%
     dplyr::rename(time = time_orig) %>%
     dplyr::select(name, time, pop)
+
+  # if needed (i.e. after simplification to a smaller set of sampled individuals), subset
+  # the full original sampling schedule table to only individuals of interest
+  df %>% dplyr::filter(name %in% metadata$sample_names)
 }
 
 # Extract list with slendr metadata (created as Eidos Dictionaries by SLiM and Python
@@ -2818,6 +2878,8 @@ get_slendr_metadata <- function(ts) {
     version = metadata$version,
     description = metadata$description,
     sampling = get_sampling(metadata),
+    sample_names = metadata$sample_names,
+    sample_ids = metadata$sample_ids,
     map = metadata$map[[1]],
     arguments = arguments
   )

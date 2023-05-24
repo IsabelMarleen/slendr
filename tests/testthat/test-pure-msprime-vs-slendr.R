@@ -36,11 +36,22 @@ test_that("pure msprime and slendr versions of the same model give the same node
 })
 
 test_that("pure msprime and slendr versions of the same model give the same phylo object", {
-  t1 <- ts1 %>% ts_phylo(1, quiet = TRUE)
-  t2 <- ts2 %>% ts_phylo(1, quiet = TRUE)
+  t1 <- ts1 %>% ts_phylo(0, quiet = TRUE)
+  t2 <- ts2 %>% ts_phylo(0, quiet = TRUE)
 
   expect_equal(t1$edge, t2$edge)
   expect_equal(t1$edge.length, t2$edge.length)
   expect_equal(t1$node.label, t2$node.label)
   expect_equal(t1$Nnode, t2$Nnode)
+})
+
+# simplification tests (after introducing constant tracking of names of sampled individuals)
+test_that("simplification on pure msprime tree sequence retains the correct data", {
+  tmp_small <- tempfile()
+  suppressWarnings(ts_small <- ts_simplify(ts2, simplify_to = c(0, 42, 100, 256)))
+  ts_save(ts_small, tmp_small)
+  ts_small_loaded <- ts_load(tmp_small)
+  expect_equal(ts_nodes(ts_small_loaded) %>% dplyr::filter(sampled) %>% nrow, 4)
+
+  expect_equal(ts_nodes(ts_small), ts_nodes(ts_small_loaded))
 })
