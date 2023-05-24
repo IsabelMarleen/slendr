@@ -275,7 +275,7 @@ sort_splits <- function(model) {
 #'   geom_polygon geom_label scale_y_continuous scale_color_discrete scale_fill_discrete
 #'   labs geom_segment arrow
 #' @export
-plot_model <- function(model, sizes = TRUE, proportions = FALSE, log = FALSE) {
+plot_model <- function(model, sizes = TRUE, proportions = FALSE, log = FALSE, text_col = NULL) {
   populations <- model$populations
 
   log10_ydelta <- 0.001
@@ -319,7 +319,7 @@ plot_model <- function(model, sizes = TRUE, proportions = FALSE, log = FALSE) {
   centers <- dplyr::tibble(
     pop = factor(pop_names, levels = pop_factors),
     N = final_sizes,
-    time = split_times,
+    time = split_times
   ) %>%
     dplyr::mutate(xmax = cumsum(N + stats::median(N)),
                   xmin = xmax - N,
@@ -475,15 +475,22 @@ plot_model <- function(model, sizes = TRUE, proportions = FALSE, log = FALSE) {
     vapply(model$splits$pop, function(x) sum(x == model$splits$parent), integer(1)) < 2
   , ]$pop
   centers[centers$pop %in% end_labels, ]$time[end_labels] <- end_times[end_labels] + log10_ydelta
-  p <- p + geom_label(data = centers, size = 3,
-                      aes(label = pop, x = center, y = time, fill = pop), fontface = "bold")
+  if(is.null(text_col)){
+    p <- p + geom_label(data = centers, size = 3,
+                        aes(label = pop, x = center, y = time, fill = pop), fontface = "bold")
+  } else{
+    p <- p + geom_label(data = centers, size = 3,
+                        aes(label = pop, x = center, y = time, fill = pop), colour=text_col, fontface = "bold")
+  }
+
 
   # add gene flow arrows and proportion labels
   if (!is.null(gene_flow)) {
     p <- p + geom_segment(data = gene_flow,
                           aes(x = x, xend = xend, y = y, yend = yend + log10_ydelta),
-                          arrow = arrow(length = unit(0.2, "cm")))
-    p <- p + geom_point(data = gene_flow, aes(x = x, y = y))
+                          arrow = arrow(length = unit(0.2, "cm")),
+                          colour="darkgrey", alpha=.9)
+    p <- p + geom_point(data = gene_flow, aes(x = x, y = y), colour="darkgrey", alpha=.9)
     if (proportions) {
       p <- p + geom_label(data = gene_flow,
                           aes(label = sprintf("%s%%", 100 * rate),
